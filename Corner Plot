@@ -1,0 +1,150 @@
+import pandas as pd
+import numpy as np
+from scipy import stats
+import matplotlib.pyplot as plt
+import math
+import emcee
+import corner
+
+data = pd.read_csv('http://astroweb.cwru.edu/SPARC/SPARC_Lelli2016c.mrt', header=97, skipinitialspace=True, 
+                   delimiter=' ', 
+                   names=['Name', 'T', 'D', 'e_D', 'f_D', 'Inc', 'e_Inc', 'L[3.6]', 'e_L[3.6]', 'Reff', 'SBeff', 'Rdisk', 'SBdisk', 'MHI', 'RHI', 'vflat', 'e_vflat', 'Q', 'Ref'])
+
+data2 = pd.read_csv('http://astroweb.cwru.edu/SPARC/MassModels_Lelli2016c.mrt', header=24, skipinitialspace=True, 
+                   delimiter=' ', 
+                   names=['ID', 'D', 'R', 'vobs', 'e_vobs', 'vgas', 'vdisk', 'vbul', 'SBdisk', 'SBbul', 'X'])
+name = 'UGC06614'
+Name = data['Name']
+gal = (Name == name)
+data = data[gal]
+i = np.array(data['Inc'])
+e_i = np.array(data['e_Inc'])
+e_D = np.array(data['e_D'])
+ID = data2['ID']
+gal1 = (ID == name)
+data2 = data2[gal1]
+vobs = np.array(data2['vobs'])
+e_vobs = np.array(data2['e_vobs'])
+R1 = np.array(data2['R'])
+vdisk = np.array(data2['vdisk'])
+vgas = np.array(data2['vgas'])
+vbul = np.array(data2['vbul'])
+D = np.array(data['D'])
+
+def logn(x, mu, sig):
+    y = stats.lognorm.pdf(x, s=sig, loc = mu, scale = np.exp(mu))
+    return y
+
+def gaus(x, mu, sig):
+    y = stats.norm.pdf(x, loc=mu, scale=sig)
+    return y
+
+def NFW(v200, c200, d):
+    ho = 73
+    rs = (v200*100)/(c200*ho)
+    R = R1*(d/D)
+    x = R/rs
+    vdm2 = v200*((c200*(np.log(1+x) - x/(1+x)))/(x*(np.log(1+c200) - c200/(1+c200))))**(1/2)
+    return vdm2
+
+
+def Burk(v200, c200, d):
+    
+    ho = 73
+    rs = (v200*100)/(c200*ho)
+    R = R1*(d/D)
+    x = R/rs
+    vdm = v200*(((c200*((1/2)*np.log(1 + x**2) + np.log(1+x) - np.arctan(x)))/(x*(((1/2)*np.log(1 + c200**2) + np.log(1+c200) - np.arctan(c200)))))**(1/2))
+    return vdm
+
+
+def pISO(v200,c200,d):
+    ho = 73
+    rs = (v200*100)/(c200*ho)
+    R = R1*(d/D)
+    x = R/rs
+    vdm = v200*((1 - (np.arctan(x))/x)/(1- (np.arctan(c200))/c200))**(1/2)
+    return vdm
+    
+
+def logpos(theta):
+    v200, c200, G, d, I = theta
+    if v200<10 or v200>500 or c200<0 or c200>100 or G<0 or d<0 or I<0 or I>90:
+        return -np.inf
+    gdisk = G
+    gbul = 1.4*gdisk
+    #Priors on our parameters
+    Dpr = np.log(gaus(d, D, e_D))
+    Ipr = np.log(gaus(I, i, e_i))
+    pgd = np.log(logn(gdisk, 0.5, 0.1))
+    pgb = np.log(logn(gbul, 0.7, 0.1))
+    
+    #Likelihood    
+    vdm = Burk(v200, c200, d)
+    
+    vdisk1 = vdisk*(np.sqrt(d/D))
+    vbul1 = vbul*(np.sqrt(d/D))
+    vgas1 = vgas*(np.sqrt(d/D))
+    
+    vobs1 = vobs*(math.sin(math.radians(i))/math.sin(math.radians(I)))
+    e_vobs1 = e_vobs*(math.sin(math.radians(i))/math.sin(math.radians(I)))
+    
+    dy = vobs1-(np.sqrt(np.square(vdm)+(gdisk*np.square(vdisk1))+(gbul*np.square(vbul1))+np.square(vgas1)))
+    chi2 = np.sum(np.square(dy/e_vobs1))
+    ll = -0.5*chi2    
+    return Dpr + Ipr + pgd + pgb + ll
+
+ndim = 5
+nwalkers = 50
+nburn = 1000
+nsteps = 10000
+
+np.random.seed(0)
+gue = np.zeros((nwalkers, ndim))
+gue[:, 0] = np.random.normal(100, 1, nwalkers)
+gue[:, 1] = np.random.normal(20, 1, nwalkers)
+gue[:, 2] = np.random.normal(0.6, 0.1, nwalkers)
+gue[:, 3] = np.random.normal(D, 0.5, nwalkers)
+gue[:, 4] = np.random.normal(i, 3, nwalkers)
+
+sample = emcee.EnsembleSampler(nwalkers, ndim, logpos)
+sample.run_mcmc(gue, nsteps, progress=True)
+
+flat_samples = sample.get_chain(discard=nburn, flat=True)
+
+theta = np.mean(flat_samples[:,0:5], axis=0)
+print(theta)
+    
+model = 'Burket'
+#-----Plotting-----
+v200, c200, G, d, I = theta
+
+R = R1*(d/D)
+
+gdisk = G
+gbul = 1.4*gdisk
+  
+vdisk1 = vdisk*(np.sqrt(d/D))
+vbul1 = vbul*(np.sqrt(d/D))
+vgas1 = vgas*(np.sqrt(d/D))
+    
+vobs1 = vobs*(math.sin(math.radians(i))/math.sin(math.radians(I)))
+e_vobs1 = e_vobs*(math.sin(math.radians(i))/math.sin(math.radians(I)))
+
+vdm = Burk(v200,c200,d)
+    
+vtot = (np.sqrt(np.square(vdm)+(gdisk*np.square(vdisk1))+(gbul*np.square(vbul1))+np.square(vgas1)))
+
+f = plt.figure()
+plt.plot(R, vtot, 'r')
+plt.plot(R, vdisk1, 'b--')
+plt.plot(R, vbul1, 'purple')
+plt.plot(R, vgas1, 'g:')
+plt.plot(R, vdm, 'k-.')
+plt.errorbar(R, vobs1, e_vobs1, fmt='ko-')
+plt.title(name + ' ' + model + ' Fit')
+plt.ylim(0, )
+g = corner.corner(flat_samples, labels=['v200', 'c200', 'G', 'd', 'I'], bins = 50)
+f.savefig("UGC06614.png")
+g.savefig("UGC06614_c.png")
+#-----------------------
