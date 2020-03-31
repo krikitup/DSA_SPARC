@@ -8,12 +8,25 @@ import corner
 
 data = pd.read_csv('http://astroweb.cwru.edu/SPARC/SPARC_Lelli2016c.mrt', header=97, skipinitialspace=True, 
                    delimiter=' ', 
-                   names=['Name', 'T', 'D', 'e_D', 'f_D', 'Inc', 'e_Inc', 'L[3.6]', 'e_L[3.6]', 'Reff', 'SBeff', 'Rdisk', 'SBdisk', 'MHI', 'RHI', 'vflat', 'e_vflat', 'Q', 'Ref'])
+                   names=['Name', 'T', 'D', 'e_D', 'f_D', 'Inc', 'e_Inc', 'L[3.6]', 'e_L[3.6]',
+                          'Reff', 'SBeff', 'Rdisk', 'SBdisk', 'MHI', 'RHI',
+                          'vflat', 'e_vflat', 'Q', 'Ref'])
 
 data2 = pd.read_csv('http://astroweb.cwru.edu/SPARC/MassModels_Lelli2016c.mrt', header=24, skipinitialspace=True, 
                    delimiter=' ', 
                    names=['ID', 'D', 'R', 'vobs', 'e_vobs', 'vgas', 'vdisk', 'vbul', 'SBdisk', 'SBbul', 'X'])
-name = 'UGC06614'
+#--------------
+#There are 2 things to change in this code-
+#1) name
+#2) model
+#--------------
+# USER INPUT
+ 
+name = 'NGC5005' #Name of the galaxy you want fit for
+model = 'Burkert' #pISO, Burkert, NFW are the options
+
+#--------------
+
 Name = data['Name']
 gal = (Name == name)
 data = data[gal]
@@ -39,33 +52,30 @@ def gaus(x, mu, sig):
     y = stats.norm.pdf(x, loc=mu, scale=sig)
     return y
 
+def pISO(v200, c200, d):
+    ho=73
+    rs = (v200*100)/(c200*ho)
+    R = R1*(d/D)
+    x = R/rs
+    vdm = (v200**2)*((1-(np.arctan(x)/x))/(1-(np.arctan(c200)/c200)))
+    return np.sqrt(np.absolute(vdm))
+
+def burk(v200, c200, d):
+    ho = 73
+    rs = (v200*100)/(c200*ho)
+    R = R1*(d/D)
+    x = R/rs
+    vdm = (v200**2)*((c200/x)*((0.5*np.log(1+x**2))+np.log(1+x)-np.arctan(x))/
+                ((0.5*np.log(1+c200**2))+np.log(1+c200)-np.arctan(c200)))
+    return np.sqrt(np.absolute(vdm))
+
 def NFW(v200, c200, d):
     ho = 73
     rs = (v200*100)/(c200*ho)
     R = R1*(d/D)
     x = R/rs
-    vdm2 = v200*((c200*(np.log(1+x) - x/(1+x)))/(x*(np.log(1+c200) - c200/(1+c200))))**(1/2)
-    return vdm2
-
-
-def Burk(v200, c200, d):
-    
-    ho = 73
-    rs = (v200*100)/(c200*ho)
-    R = R1*(d/D)
-    x = R/rs
-    vdm = v200*(((c200*((1/2)*np.log(1 + x**2) + np.log(1+x) - np.arctan(x)))/(x*(((1/2)*np.log(1 + c200**2) + np.log(1+c200) - np.arctan(c200)))))**(1/2))
-    return vdm
-
-
-def pISO(v200,c200,d):
-    ho = 73
-    rs = (v200*100)/(c200*ho)
-    R = R1*(d/D)
-    x = R/rs
-    vdm = v200*((1 - (np.arctan(x))/x)/(1- (np.arctan(c200))/c200))**(1/2)
-    return vdm
-    
+    vdm2 = (v200**2)*((c200*(np.log(1+x)-(x/(1+x))))/(x*(np.log(1+c200)-(c200/(1+c200)))))
+    return np.sqrt(np.absolute(vdm2))
 
 def logpos(theta):
     v200, c200, G, d, I = theta
@@ -79,8 +89,13 @@ def logpos(theta):
     pgd = np.log(logn(gdisk, 0.5, 0.1))
     pgb = np.log(logn(gbul, 0.7, 0.1))
     
-    #Likelihood    
-    vdm = Burk(v200, c200, d)
+    #Likelihood
+    if model=='pISO':
+        vdm = pISO(v200, c200, d)
+    elif model=='Burkert':
+        vdm = burk(v200, c200, d)
+    elif model == 'NFW':
+        vdm = NFW(v200, c200, d)
     
     vdisk1 = vdisk*(np.sqrt(d/D))
     vbul1 = vbul*(np.sqrt(d/D))
@@ -95,27 +110,28 @@ def logpos(theta):
     return Dpr + Ipr + pgd + pgb + ll
 
 ndim = 5
-nwalkers = 50
-nburn = 1000
-nsteps = 10000
+nwalkers = 20
+nburn = 5000
+nsteps = 25000
 
 np.random.seed(0)
 gue = np.zeros((nwalkers, ndim))
-gue[:, 0] = np.random.normal(100, 1, nwalkers)
-gue[:, 1] = np.random.normal(20, 1, nwalkers)
-gue[:, 2] = np.random.normal(0.6, 0.1, nwalkers)
+gue[:, 0] = np.random.normal(85, 10, nwalkers)
+gue[:, 1] = np.random.normal(7.5, 2, nwalkers)
+gue[:, 2] = np.random.normal(0.5, 0.1, nwalkers)
 gue[:, 3] = np.random.normal(D, 0.5, nwalkers)
 gue[:, 4] = np.random.normal(i, 3, nwalkers)
 
 sample = emcee.EnsembleSampler(nwalkers, ndim, logpos)
 sample.run_mcmc(gue, nsteps, progress=True)
 
+print("Mean acceptance fraction: {0:.3f}".format(np.mean(sample.acceptance_fraction)))
+
 flat_samples = sample.get_chain(discard=nburn, flat=True)
 
 theta = np.mean(flat_samples[:,0:5], axis=0)
 print(theta)
-    
-model = 'Burket'
+
 #-----Plotting-----
 v200, c200, G, d, I = theta
 
@@ -131,11 +147,17 @@ vgas1 = vgas*(np.sqrt(d/D))
 vobs1 = vobs*(math.sin(math.radians(i))/math.sin(math.radians(I)))
 e_vobs1 = e_vobs*(math.sin(math.radians(i))/math.sin(math.radians(I)))
 
-vdm = Burk(v200,c200,d)
+if model=='pISO':
+    vdm = pISO(v200, c200, d)
+elif model=='Burkert':
+    vdm = burk(v200, c200, d)
+elif model == 'NFW':
+    vdm = NFW(v200, c200, d)
     
+    
+
 vtot = (np.sqrt(np.square(vdm)+(gdisk*np.square(vdisk1))+(gbul*np.square(vbul1))+np.square(vgas1)))
 
-f = plt.figure()
 plt.plot(R, vtot, 'r')
 plt.plot(R, vdisk1, 'b--')
 plt.plot(R, vbul1, 'purple')
@@ -143,8 +165,7 @@ plt.plot(R, vgas1, 'g:')
 plt.plot(R, vdm, 'k-.')
 plt.errorbar(R, vobs1, e_vobs1, fmt='ko-')
 plt.title(name + ' ' + model + ' Fit')
-plt.ylim(0, )
-g = corner.corner(flat_samples, labels=['v200', 'c200', 'G', 'd', 'I'], bins = 50)
-f.savefig("UGC06614.png")
-g.savefig("UGC06614_c.png")
+
+
+corner.corner(flat_samples, labels=['v200', 'c200', 'G', 'd', 'I'], bins = 50)
 #-----------------------
